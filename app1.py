@@ -64,51 +64,87 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def process_image(image):
+    """Process image to ensure RGB format and reasonable size"""
+    # Convert to RGB if image is RGBA
+    if image.mode == 'RGBA':
+        image = image.convert('RGB')
+    
+    # Resize image if too large while maintaining aspect ratio
+    max_size = 1600
+    if max(image.size) > max_size:
+        ratio = max_size / max(image.size)
+        new_size = tuple(int(dim * ratio) for dim in image.size)
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+    
+    return image
+
 def encode_image_to_base64(image):
     """Convert PIL Image to base64 string"""
-    buffered = io.BytesIO()
-    image.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode()
+    try:
+        # Process image before encoding
+        processed_image = process_image(image)
+        
+        # Use BytesIO for in-memory operation
+        buffered = io.BytesIO()
+        processed_image.save(buffered, format="JPEG", quality=95)
+        return base64.b64encode(buffered.getvalue()).decode()
+    except Exception as e:
+        st.error(f"Error processing image: {str(e)}")
+        return None
 
 def get_gemini_response(input_image, model_name):
     """Extract math question from image using selected Gemini model"""
-    model = genai.GenerativeModel(model_name)
-    prompt = "extract what exactly in the image. no preamble "
-    response = model.generate_content([prompt, input_image])
-    return response.text
+    try:
+        # Process image before sending to Gemini
+        processed_image = process_image(input_image)
+        
+        model = genai.GenerativeModel(model_name)
+        prompt = "extract what exactly in the image. no preamble "
+        response = model.generate_content([prompt, processed_image])
+        return response.text
+    except Exception as e:
+        st.error(f"Gemini API Error: {str(e)}")
+        return None
 
 def get_llama_response(input_image, model_name):
     """Extract math question from image using selected Llama model"""
-    base64_image = encode_image_to_base64(input_image)
-    
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "extract the complete question, how it was arranged, do not explain, no preamble "
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}"
+    try:
+        base64_image = encode_image_to_base64(input_image)
+        if not base64_image:
+            return None
+        
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "extract what exactly in the image. no preamble"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
                     }
-                }
-            ]
-        }
-    ]
-    
-    completion = groq_client.chat.completions.create(
-        model=model_name,
-        messages=messages,
-        temperature=0.1,
-        max_tokens=1024,
-        top_p=1,
-        stream=False
-    )
-    
-    return completion.choices[0].message.content
+                ]
+            }
+        ]
+        
+        completion = groq_client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=1024,
+            top_p=1,
+            stream=False
+        )
+        
+        return completion.choices[0].message.content
+    except Exception as e:
+        st.error(f"Llama API Error: {str(e)}")
+        return None
 
 def load_image():
     """Image loader and processor"""
@@ -118,9 +154,13 @@ def load_image():
         help="Supported formats: PNG, JPG, JPEG"
     )
     if uploaded_file is not None:
-        image_data = uploaded_file.read()
-        image = Image.open(io.BytesIO(image_data))
-        return image
+        try:
+            image_data = uploaded_file.read()
+            image = Image.open(io.BytesIO(image_data))
+            return image
+        except Exception as e:
+            st.error(f"Error loading image: {str(e)}")
+            return None
     return None
 
 def main():
@@ -168,7 +208,9 @@ def main():
         st.markdown("### Upload Image")
         image = load_image()
         if image:
-            st.image(image, caption="Uploaded Image", use_container_width=True)
+            # Display processed image
+            processed_image = process_image(image)
+            st.image(processed_image, caption="Uploaded Image", use_container_width=True)
             
             # Extract button
             if st.button("Extract Question", type="primary"):
@@ -179,21 +221,25 @@ def main():
                             
                             # Use appropriate model based on selection
                             if model_type == "Gemini":
-                                question = get_gemini_response(image, selected_model)
+                                question = get_gemini_response(processed_image, selected_model)
                             else:
-                                question = get_llama_response(image, selected_model)
+                                question = get_llama_response(processed_image, selected_model)
                             
-                            st.write(question)
-                            
-                            # Download option
-                            st.download_button(
-                                label="Download Question",
-                                data=question,
-                                file_name="extracted_question.txt",
-                                mime="text/plain"
-                            )
+                            if question:
+                                st.write(question)
+                                
+                                # Download option
+                                st.download_button(
+                                    label="Download Question",
+                                    data=question,
+                                    file_name="extracted_question.txt",
+                                    mime="text/plain"
+                                )
+                            else:
+                                st.error("Failed to extract question from the image. Please try again with a different image or model.")
                     except Exception as e:
                         st.error(f"Error during extraction: {str(e)}")
+                        st.error("Please try again with a different image or model.")
 
     # App info
     with st.expander("About"):
@@ -212,6 +258,12 @@ def main():
             Llama Models:
             - Llama 3.2 90B Vision: Large vision model with 90B parameters
             - Llama 3.2 11B Vision: Efficient vision model with 11B parameters
+            
+            Supported Image Formats:
+            - PNG
+            - JPG/JPEG
+            
+            Note: Images will be automatically processed for optimal performance.
         """)
 
 if __name__ == "__main__":
