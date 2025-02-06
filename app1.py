@@ -206,7 +206,6 @@ def main():
             Gemini Models:
             - Gemini 2.0 Flash: Latest version, optimized for quick responses
             - Gemini 2.0 Flash Lite: Lightweight version of 2.0 Flash
-            - Gemini 1.5 Pro: More powerful model with advanced capabilities
             - Gemini 1.5 Flash: Balanced performance and speed
             - Gemini 1.5 Flash 8B: Efficient 8B parameter version
             
